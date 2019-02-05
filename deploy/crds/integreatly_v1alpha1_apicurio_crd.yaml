@@ -1,0 +1,55 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: apicurios.integreatly.org
+spec:
+  group: integreatly.org
+  names:
+    kind: Apicurio
+    listKind: ApicurioList
+    plural: apicurios
+    singular: apicurio
+    shortnames:
+      - ac
+    categories:
+      - all
+  scope: Namespaced
+  version: v1alpha1
+  subresources:
+    status: {}
+  additionalPrinterColumns:
+    - name: status
+      description: apicurio instance status
+      type: string
+      JSONPath: .status.message
+    - name: version
+      type: string
+      description: apicurio version
+      JSONPath: .spec.version
+    - name: created
+      description: apicurio creation date
+      type: date
+      JSONPath: .metadata.creationTimestamp
+  validation:
+    openAPIV3Schema:
+      properties:
+        spec:
+          properties:
+            version:
+              type: string
+            type:
+              type: string
+            app_domain:
+              type: string
+            auth:
+              type: object
+            api:
+              type: object
+            websocket:
+              type: object
+            studio:
+              type: object
+          required:
+            - version
+            - type
+            - app_domain

@@ -1,0 +1,42 @@
+apiVersion: integreatly.org/v1alpha1
+kind: Apicurio
+metadata:
+  name: apicurio-external-kc
+  labels:
+    app: apicurio
+spec:
+  version: 0.2.20.Final
+  type: apicurio-external-auth
+  app_domain: 'apps.subdomain'
+  auth:
+    host: 'sso.apps.subdomain'
+    username: admin
+    password: admin
+    realm: apicurio
+  api:
+    route: apicurio-studio-api
+    memory:
+      min: 800Mi
+      max: 4Gi
+    cpu:
+      min: 100m
+      max: '1'
+    jvm:
+      min: '768m'
+      max: '2048m'
+  websocket:
+    route: apicurio-studio-ws
+    memory:
+      min: 600Mi
+      max: 1300Mi
+    cpu:
+      min: 100m
+      max: '1'
+  studio:
+    route: apicurio-studio
+    memory:
+      min: 600Mi
+      max: 1300Mi
+    cpu:
+      min: 100m
+      max: '1'

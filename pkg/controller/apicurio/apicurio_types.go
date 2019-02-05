@@ -1,27 +1,35 @@
 package apicurio
 
 import (
-	"github.com/gobuffalo/packr"
-	"github.com/integr8ly/operator-sdk-openshift-utils/pkg/api/template"
+	"context"
+	"github.com/openshift/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ReconcileApiCurio reconciles a Apicurio object
-type ReconcileApiCurio struct {
-	// This client, initialized using mgr.Client() above, is a split client
-	// that reads objects from the cache and writes to the apiserver
-	client client.Client
-	config *rest.Config
-	scheme *runtime.Scheme
-	tmpl   *template.Tmpl
-	box    packr.Box
+type watcher struct {
+	client           clientSpec       `json:"-"`
+	ResourceCheckers []*statusChecker `json:"resource_checkers"`
 }
 
-var routeParams = map[string]string{
-	"UI_ROUTE":   "apicurio-studio",
-	"WS_ROUTE":   "apicurio-studio-ws",
-	"API_ROUTE":  "apicurio-studio-api",
-	"AUTH_ROUTE": "apicurio-studio-auth",
+type statusChecker struct {
+	Name    string `json:"name"`
+	IsReady bool `json:"is_ready"`
+	Info *statusResource `json:"info"`
+	checker statusCheckerSpec `json:"-"`
+}
+
+type statusResource struct {
+	Memory map[string]string `json:"memory"`
+	CPU map[string]string `json:"cpu"`
+	JVM map[string]string `json:"jvm"`
+}
+
+type clientSpec interface {
+	Get(ctx context.Context, key client.ObjectKey, obj runtime.Object) error
+}
+
+type statusCheckerSpec interface {
+	IsReady() bool
+	Reload(dc *v1.DeploymentConfig)
 }

@@ -1,30 +1,47 @@
-package apicuriodeployment
+package apicurio
 
 import (
 	"context"
-	"log"
-	integreatlyv1alpha1 "github.com/integr8ly/apicurio-operator/pkg/apis/integreatly/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"encoding/json"
 	"fmt"
-	"github.com/integr8ly/operator-sdk-openshift-utils/pkg/api/template"
+	integreatlyv1alpha1 "github.com/integr8ly/apicurio-operator/pkg/apis/integreatly/v1alpha1"
+	"github.com/integr8ly/apicurio-operator/pkg/kube/template/filters"
 	"github.com/integr8ly/operator-sdk-openshift-utils/pkg/api/kubernetes"
+	"github.com/integr8ly/operator-sdk-openshift-utils/pkg/api/template"
 	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/api/errors"
 	kuberr "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+	"log"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"strings"
 
 	"github.com/gobuffalo/packr"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"github.com/integr8ly/apicurio-operator/pkg/kube"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/rest"
+
+	"github.com/openshift/api/apps/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+var apicurioWatcher *watcher
+
+type ReconcileApiCurio struct {
+	// This client, initialized using mgr.Client() above, is a split client
+	// that reads objects from the cache and writes to the apiserver
+	client client.Client
+	config *rest.Config
+	scheme *runtime.Scheme
+	tmpl   *template.Tmpl
+	box    packr.Box
+}
 
 // Add creates a new Apicurio Controller and adds it to the Manager. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
@@ -51,13 +68,16 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
+	client := mgr.GetClient()
+	apicurioWatcher = NewWatcher(client)
+
 	// Watch for changes to primary resource Apicurio
 	err = c.Watch(&source.Kind{Type: &integreatlyv1alpha1.Apicurio{}}, &handler.EnqueueRequestForObject{})
 	if err != nil {
 		return err
 	}
 
-	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: &v1.DeploymentConfig{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &integreatlyv1alpha1.Apicurio{},
 	})
@@ -108,37 +128,97 @@ func (r *ReconcileApiCurio) Reconcile(request reconcile.Request) (reconcile.Resu
 		}
 	}
 
-	err = r.bootstrap(request, instance)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
+	switch instance.Status.Type {
+	case integreatlyv1alpha1.ApicurioNone:
+		err = r.bootstrap(instance)
+		if err != nil {
+			logrus.Errorf("Error while bootstrapping template: %v", err)
+			return reconcile.Result{}, err
+		}
+	case integreatlyv1alpha1.ApicurioNew:
+		err = r.processTemplate(instance)
+		if err != nil {
+			logrus.Errorf("Error while processing template: %v", err)
+			return reconcile.Result{}, err
+		}
 
-	err = r.processTemplate(instance)
-	if err != nil {
-		logrus.Errorf("Error while processing template: %v", err)
-		return reconcile.Result{}, err
-	}
+		err = r.createObjects(request.Namespace, instance)
+		if err != nil {
+			logrus.Errorf("Error creating runtime objects: %v", err)
+			return reconcile.Result{}, err
+		}
 
-	err = r.createObjects(request.Namespace, instance)
-	if err != nil {
-		logrus.Errorf("Error creating runtime objects: %v", err)
-		return reconcile.Result{}, err
+		err = r.reloadCheckers(instance)
+		if err != nil {
+			logrus.Errorf("Failed to set apicurio checkers: %v", err)
+			return reconcile.Result{}, err
+		}
+	case integreatlyv1alpha1.ApicurioReconcile:
+		err = r.reloadCheckers(instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
+		logrus.Info("Provisioning please wait")
+
+		if !r.isReady(instance) {
+			logrus.Info("Deployment not ready yet")
+			return reconcile.Result{Requeue: true}, nil
+		}
+
+		logrus.Info("Apicurio is ready - finishing reconcile loop")
+		err = r.finish(instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
+		return reconcile.Result{}, nil
+	case integreatlyv1alpha1.ApicurioReady:
+		if err = r.reloadCheckers(instance); err != nil {
+			return reconcile.Result{}, err
+		}
+
+		if !apicurioWatcher.isReady() {
+			logrus.Info("Readiness checks failed, rolling back reconcile status")
+			if err = r.recycle(instance); err != nil {
+				return reconcile.Result{}, err
+			}
+
+			return reconcile.Result{}, nil
+		} else {
+			_, err := r.diff(instance)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+		}
+		return reconcile.Result{}, nil
+	default:
+		return reconcile.Result{}, nil
 	}
 
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileApiCurio) bootstrap(request reconcile.Request, cr *integreatlyv1alpha1.Apicurio) error {
+func (r *ReconcileApiCurio) bootstrap(cr *integreatlyv1alpha1.Apicurio) error {
+	cr.Status = integreatlyv1alpha1.ApicurioStatus{
+		Type:    integreatlyv1alpha1.ApicurioNew,
+		Reason:  new(string),
+		Message: new(string),
+	}
+	*cr.Status.Reason = "NewApicurio"
+	*cr.Status.Message = "New apicurio cr detected"
+	err := r.client.Status().Update(context.TODO(), cr)
+	if err != nil {
+		return err
+	}
+
 	if r.tmpl != nil {
 		return nil
 	}
 
-	tmplPath := cr.Spec.Template
-	if tmplPath == "" {
-		return fmt.Errorf("Spec.Template.Path property is not defined")
-	}
+	tmplPath := getTemplatePath(cr)
 
-	yamlData, err := r.box.Find(cr.Spec.Template)
+	yamlData, err := r.box.Find(tmplPath)
 	if err != nil {
 		return err
 	}
@@ -160,46 +240,82 @@ func (r *ReconcileApiCurio) bootstrap(request reconcile.Request, cr *integreatly
 
 func (r *ReconcileApiCurio) processTemplate(cr *integreatlyv1alpha1.Apicurio) error {
 	params := make(map[string]string)
-	for k, v := range routeParams {
-		if k == "AUTH_ROUTE" && cr.Spec.ExternalAuthUrl != "" {
-			params[k] = cr.Spec.ExternalAuthUrl
-			continue
+	filterDcFn := filters.FilterDcs
+
+	if cr.Spec.Auth != nil {
+		authCommons := cr.Spec.Auth.ApicurioResource
+		updateRoute(cr, &authCommons)
+		mapResource(params, "AUTH", &authCommons)
+		//external auth instanceAuth
+		if cr.Spec.Type == integreatlyv1alpha1.ApicurioExternalAuthType {
+			fixAuthUrl(&cr.Spec.Auth.Host)
+			params["AUTH_ROUTE"] = cr.Spec.Auth.Host
+			params["KC_USER"] = cr.Spec.Auth.Username
+			params["KC_PASS"] = cr.Spec.Auth.Password
+
+			if cr.Spec.Auth.Realm != "" {
+				params["KC_REALM"] = cr.Spec.Auth.Realm
+			}
+
+			filterDcFn = filters.FilterSkipAuthDc
 		}
-		params[k] = v + "." + cr.Spec.AppDomain
 	}
 
-	if cr.Spec.AuthRealm != "" {
-		params["KC_REALM"] = cr.Spec.AuthRealm
+	if cr.Spec.Api != nil {
+		updateRoute(cr, cr.Spec.Api)
+		mapResource(params, "API", cr.Spec.Api)
 	}
 
-	if len(cr.Spec.JvmHeap) == 2 {
-		params["API_JVM_MIN"] = cr.Spec.JvmHeap[0]
-		params["API_JVM_MAX"] = cr.Spec.JvmHeap[1]
+	if cr.Spec.WebSocket != nil {
+		updateRoute(cr, cr.Spec.WebSocket)
+		mapResource(params, "WS", cr.Spec.WebSocket)
 	}
-	if len(cr.Spec.MemLimit) == 2 {
-		params["API_MEM_REQUEST"] = cr.Spec.MemLimit[0]
-		params["API_MEM_LIMIT"] = cr.Spec.MemLimit[1]
+
+	if cr.Spec.Studio != nil {
+		updateRoute(cr, cr.Spec.Studio)
+		mapResource(params, "UI", cr.Spec.Studio)
 	}
 
 	err := r.tmpl.Process(params, cr.Namespace)
 	if err != nil {
-		logrus.Infof("Error: %v", err)
 		return err
 	}
 
-	for _, ro := range r.tmpl.Source.Objects {
-		b, _ := ro.MarshalJSON()
-		logrus.Info("Object: %s", string(b[:]))
+	dcs := r.tmpl.GetObjects(filterDcFn)
+	for _, dc := range dcs {
+		uo, err := kubernetes.UnstructuredFromRuntimeObject(dc)
+		if err != nil {
+			return err
+		}
+
+		apicurioWatcher.addChecker(uo.GetName())
 	}
 
-	logrus.Infof("Template Objects: %+v", r.tmpl.Source.Objects)
+	cr.Status = integreatlyv1alpha1.ApicurioStatus{
+		Type:    integreatlyv1alpha1.ApicurioReconcile,
+		Reason:  new(string),
+		Message: new(string),
+	}
+	*cr.Status.Reason = "ApicurioReconcile"
+	*cr.Status.Message = "Deploying apicurio instance"
+	err = r.client.Status().Update(context.TODO(), cr)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
 
 func (r *ReconcileApiCurio) createObjects(ns string, cr *integreatlyv1alpha1.Apicurio) error {
+	objects := make([]runtime.Object, 0)
+	var filterFn = template.NoFilterFn
 
-	objects := r.tmpl.GetObjects(filterAuthFn(cr))
+	if cr.Spec.Type == integreatlyv1alpha1.ApicurioExternalAuthType {
+		filterFn = filters.FilterSkipAuthObjs
+	}
+
+	r.tmpl.CopyObjects(filterFn, &objects)
+
 	for _, o := range objects {
 		uo, err := kubernetes.UnstructuredFromRuntimeObject(o)
 		if err != nil {
@@ -222,8 +338,12 @@ func (r *ReconcileApiCurio) createObjects(ns string, cr *integreatlyv1alpha1.Api
 	return nil
 }
 
+func (r *ReconcileApiCurio) reloadCheckers(cr *integreatlyv1alpha1.Apicurio) error {
+	return apicurioWatcher.reload(cr.Namespace)
+}
+
 func (r *ReconcileApiCurio) deprovision(cr *integreatlyv1alpha1.Apicurio) error {
-	ok, err := integreatlyv1alpha1.HasFinalizer(cr, "foregroundDeletion")
+	ok, err := kube.HasFinalizer(cr, "foregroundDeletion")
 	if err != nil {
 		return err
 	}
@@ -232,10 +352,18 @@ func (r *ReconcileApiCurio) deprovision(cr *integreatlyv1alpha1.Apicurio) error 
 		return nil
 	}
 
-	_, err = integreatlyv1alpha1.RemoveFinalizer(cr, integreatlyv1alpha1.ApicurioFinalizer)
+	_, err = kube.RemoveFinalizer(cr, integreatlyv1alpha1.DefaultFinalizer)
 	if err != nil {
 		return err
 	}
+
+	cr.Status = integreatlyv1alpha1.ApicurioStatus{
+		Type:    integreatlyv1alpha1.ApicurioDelete,
+		Reason:  new(string),
+		Message: new(string),
+	}
+	*cr.Status.Reason = "ApicurioDelete"
+	*cr.Status.Message = "Apicurio is being deleted"
 
 	err = r.client.Update(context.TODO(), cr)
 	if err != nil {
@@ -245,18 +373,67 @@ func (r *ReconcileApiCurio) deprovision(cr *integreatlyv1alpha1.Apicurio) error 
 	return nil
 }
 
-func filterAuthFn(cr *integreatlyv1alpha1.Apicurio) template.FilterFn {
-	return func(obj *runtime.Object) error {
-		uo, err := kubernetes.UnstructuredFromRuntimeObject(*obj)
-		if err != nil {
-			return err
-		}
-
-		isAuthObj := strings.Contains(uo.GetName(), "auth")
-		if cr.Spec.ExternalAuthUrl != "" && isAuthObj {
-			return fmt.Errorf("auth object should not be created: %v", obj)
-		}
-
-		return nil
+func (r *ReconcileApiCurio) finish(cr *integreatlyv1alpha1.Apicurio) error {
+	b, err := json.Marshal(apicurioWatcher)
+	if err != nil {
+		return err
 	}
+
+	annotations := cr.GetAnnotations()
+	if annotations == nil {
+		return fmt.Errorf("apicurio annotation is nil: %v", annotations)
+	}
+
+	annotations["io.apicurio/state"] = fmt.Sprintf("%s", string(b[:]))
+	cr.SetAnnotations(annotations)
+	err = r.client.Update(context.TODO(), cr)
+	if err != nil {
+		return err
+	}
+
+	key := types.NamespacedName{
+		Name: cr.Name,
+		Namespace: cr.Namespace,
+	}
+	err = r.client.Get(context.TODO(), key, cr)
+	if err != nil {
+		return err
+	}
+
+	cr.Status = integreatlyv1alpha1.ApicurioStatus{
+		Type:    integreatlyv1alpha1.ApicurioReady,
+		Reason:  new(string),
+		Message: new(string),
+	}
+	*cr.Status.Reason = "ApicurioReady"
+	*cr.Status.Message = "Apicurio is ready"
+
+	return r.client.Status().Update(context.TODO(), cr)
 }
+
+func (r *ReconcileApiCurio) recycle(cr *integreatlyv1alpha1.Apicurio) error {
+	cr.Status = integreatlyv1alpha1.ApicurioStatus{
+		Type:    integreatlyv1alpha1.ApicurioNew,
+		Reason:  new(string),
+		Message: new(string),
+	}
+	*cr.Status.Reason = "NewApicurio"
+	*cr.Status.Message = "New apicurio cr detected"
+
+	return r.client.Status().Update(context.TODO(), cr)
+}
+
+func (r *ReconcileApiCurio) diff(cr *integreatlyv1alpha1.Apicurio) ([]string, error) {
+	var err error
+
+	resources := make([]string, 0)
+
+	err = apicurioWatcher.reload(cr.Namespace)
+	if err != nil {
+		return resources, err
+	}
+
+	return resources, nil
+}
+
+
