@@ -1,0 +1,51 @@
+apiVersion: integreatly.org/v1alpha1
+kind: Apicurio
+metadata:
+  name: example-apicurio
+spec:
+  version: 0.2.18.Final
+  type: full
+  app_domain: 'apps.lrossett-9eab.openshiftworkshop.com'
+  auth:
+    route: apicurio-studio-auth
+    realm: openshift
+    url: https://kc.url
+    memory:
+      min: 600Mi
+      max: 1300Mi
+    cpu:
+      min: 100m
+      max: 1
+  storage:
+    host: ''
+    username: ''
+    password: ''
+  api:
+    route: apicurio-studio-api
+    memory:
+      min: 600Mi
+      max: 1300Mi
+    cpu:
+      request: 100m
+      limit: 1
+  ws:
+    route: apicurio-studio-ws
+    memory:
+      min: 600Mi
+      max: 1300Mi
+    cpu:
+      min: 100m
+      max: 1
+  ui:
+    route: apicurio-studio
+    memory:
+      min: 600Mi
+      max: 1300Mi
+    cpu:
+      min: 100m
+      max: 1
+
+  #auth_realm: openshift
+  #external_auth_url: ''
+  jvm_heap: ["768m", "2048m"]
+  mem_limit: ["800Mi", "4Gi"]
