@@ -15,17 +15,7 @@ func NewWatcher(client clientSpec) *watcher {
 	}
 }
 
-func (w *watcher) addChecker(name string) {
-	for _, checker := range w.ResourceCheckers {
-		if checker.Name == name {
-			return
-		}
-	}
-
-	w.ResourceCheckers = append(w.ResourceCheckers, &statusChecker{Name: name})
-}
-
-func (w *watcher) reload(ns string) error {
+func (w *watcher) Reload(ns string) error {
 	key := &types.NamespacedName{Namespace: ns}
 
 	for _, res := range w.ResourceCheckers {
@@ -74,6 +64,27 @@ func (w *watcher) reload(ns string) error {
 	return nil
 }
 
+func (w *watcher) IsReady() bool {
+	for _, res := range w.ResourceCheckers {
+		res.IsReady = res.checker.IsReady()
+		if !res.checker.IsReady() {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (w *watcher) AddChecker(name string) {
+	for _, checker := range w.ResourceCheckers {
+		if checker.Name == name {
+			return
+		}
+	}
+
+	w.ResourceCheckers = append(w.ResourceCheckers, &statusChecker{Name: name})
+}
+
 func (w *watcher) getDeploymentConfig(key *types.NamespacedName) (error, *v1.DeploymentConfig) {
 	dc := &v1.DeploymentConfig{
 		ObjectMeta: v12.ObjectMeta{
@@ -89,20 +100,3 @@ func (w *watcher) getDeploymentConfig(key *types.NamespacedName) (error, *v1.Dep
 
 	return nil, dc
 }
-
-func (w *watcher) isReady() bool {
-	for _, res := range w.ResourceCheckers {
-		res.IsReady = res.checker.IsReady()
-		if !res.checker.IsReady() {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (w *watcher) getgetInfo() *statusResource {
-
-}
-
-

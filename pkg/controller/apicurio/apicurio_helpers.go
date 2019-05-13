@@ -62,7 +62,7 @@ func fixAuthUrl(url *string) {
 }
 
 func (r *ReconcileApiCurio) isReady(cr *integreatlyv1alpha1.Apicurio) bool {
-	return apicurioWatcher.isReady()
+	return apicurioWatcher.IsReady()
 }
 
 func getEnvValue(env []v1.EnvVar, name string) string {

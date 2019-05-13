@@ -2,7 +2,6 @@ package apicurio
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	integreatlyv1alpha1 "github.com/integr8ly/apicurio-operator/pkg/apis/integreatly/v1alpha1"
 	"github.com/integr8ly/apicurio-operator/pkg/kube/template/filters"
@@ -31,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var apicurioWatcher *watcher
+var apicurioWatcher watcherSpec
 
 type ReconcileApiCurio struct {
 	// This client, initialized using mgr.Client() above, is a split client
@@ -178,7 +177,7 @@ func (r *ReconcileApiCurio) Reconcile(request reconcile.Request) (reconcile.Resu
 			return reconcile.Result{}, err
 		}
 
-		if !apicurioWatcher.isReady() {
+		if !apicurioWatcher.IsReady() {
 			logrus.Info("Readiness checks failed, rolling back reconcile status")
 			if err = r.recycle(instance); err != nil {
 				return reconcile.Result{}, err
@@ -288,7 +287,7 @@ func (r *ReconcileApiCurio) processTemplate(cr *integreatlyv1alpha1.Apicurio) er
 			return err
 		}
 
-		apicurioWatcher.addChecker(uo.GetName())
+		apicurioWatcher.AddChecker(uo.GetName())
 	}
 
 	cr.Status = integreatlyv1alpha1.ApicurioStatus{
@@ -339,7 +338,7 @@ func (r *ReconcileApiCurio) createObjects(ns string, cr *integreatlyv1alpha1.Api
 }
 
 func (r *ReconcileApiCurio) reloadCheckers(cr *integreatlyv1alpha1.Apicurio) error {
-	return apicurioWatcher.reload(cr.Namespace)
+	return apicurioWatcher.Reload(cr.Namespace)
 }
 
 func (r *ReconcileApiCurio) deprovision(cr *integreatlyv1alpha1.Apicurio) error {
@@ -374,22 +373,24 @@ func (r *ReconcileApiCurio) deprovision(cr *integreatlyv1alpha1.Apicurio) error 
 }
 
 func (r *ReconcileApiCurio) finish(cr *integreatlyv1alpha1.Apicurio) error {
-	b, err := json.Marshal(apicurioWatcher)
-	if err != nil {
-		return err
-	}
+	//b, err := json.Marshal(apicurioWatcher)
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//annotations := cr.GetAnnotations()
+	//if annotations == nil {
+	//	return fmt.Errorf("apicurio annotation is nil: %v", annotations)
+	//}
+	//
+	//annotations["io.apicurio/state"] = fmt.Sprintf("%s", string(b[:]))
+	//cr.SetAnnotations(annotations)
+	//err = r.client.Update(context.TODO(), cr)
+	//if err != nil {
+	//	return err
+	//}
 
-	annotations := cr.GetAnnotations()
-	if annotations == nil {
-		return fmt.Errorf("apicurio annotation is nil: %v", annotations)
-	}
-
-	annotations["io.apicurio/state"] = fmt.Sprintf("%s", string(b[:]))
-	cr.SetAnnotations(annotations)
-	err = r.client.Update(context.TODO(), cr)
-	if err != nil {
-		return err
-	}
+	var err error
 
 	key := types.NamespacedName{
 		Name: cr.Name,
@@ -428,7 +429,7 @@ func (r *ReconcileApiCurio) diff(cr *integreatlyv1alpha1.Apicurio) ([]string, er
 
 	resources := make([]string, 0)
 
-	err = apicurioWatcher.reload(cr.Namespace)
+	err = apicurioWatcher.Reload(cr.Namespace)
 	if err != nil {
 		return resources, err
 	}

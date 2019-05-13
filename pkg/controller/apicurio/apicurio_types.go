@@ -2,7 +2,6 @@ package apicurio
 
 import (
 	"context"
-	"github.com/openshift/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -29,7 +28,13 @@ type clientSpec interface {
 	Get(ctx context.Context, key client.ObjectKey, obj runtime.Object) error
 }
 
+type watcherSpec interface {
+	AddChecker(name string)
+	IsReady() bool
+	Reload(ns string) error
+}
+
 type statusCheckerSpec interface {
 	IsReady() bool
-	Reload(dc *v1.DeploymentConfig)
+	Reload(object runtime.Object) error
 }

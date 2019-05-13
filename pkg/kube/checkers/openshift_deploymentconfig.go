@@ -3,6 +3,7 @@ package checkers
 import (
 	"github.com/openshift/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type deploymentConfigCheck struct {
@@ -15,8 +16,10 @@ func NewDeploymentConfigCheck(dc *v1.DeploymentConfig) *deploymentConfigCheck {
 	}
 }
 
-func (dcc *deploymentConfigCheck) Reload(dc *v1.DeploymentConfig) {
-	dcc.ref = dc
+func (dcc *deploymentConfigCheck) Reload(object runtime.Object)  error {
+	dcc.ref = object.(*v1.DeploymentConfig)
+
+	return nil
 }
 
 func (dcc *deploymentConfigCheck) IsReady() bool {

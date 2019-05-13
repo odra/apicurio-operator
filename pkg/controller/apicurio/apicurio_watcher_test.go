@@ -77,7 +77,7 @@ func TestWatcher_AddChecker(t *testing.T) {
 			},
 			Watcher: func(client client.Client) *watcher {
 				w := NewWatcher(client)
-				w.addChecker( "apicurio-studio-ui")
+				w.AddChecker( "apicurio-studio-ui")
 				return w
 			},
 			Validate: func(t *testing.T, w *watcher, name string) {
@@ -94,7 +94,7 @@ func TestWatcher_AddChecker(t *testing.T) {
 
 	for _, tc := range cases {
 		watcher := tc.Watcher(tc.Client())
-		watcher.addChecker(tc.CheckerName)
+		watcher.AddChecker(tc.CheckerName)
 		tc.Validate(t, watcher, tc.CheckerName)
 	}
 }
@@ -252,7 +252,7 @@ func TestNewWatcher_Reload(t *testing.T) {
 				return fake.NewFakeClientWithScheme(scheme, ros...)
 			},
 			Validate: func(t *testing.T, w *watcher) {
-				w.addChecker("mydc")
+				w.AddChecker("mydc")
 				if len(w.ResourceCheckers)  != 1 {
 					t.Fatalf("Should have one checker: %v", w.ResourceCheckers)
 				}
@@ -269,7 +269,7 @@ func TestNewWatcher_Reload(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			client := tc.Client()
 			watcher := NewWatcher(client)
-			err := watcher.reload(tc.Key.Namespace)
+			err := watcher.Reload(tc.Key.Namespace)
 
 			if tc.ExpectError && err == nil {
 				t.Fatal("Expected error but got none")
@@ -303,7 +303,7 @@ func TestNewWatcher_IsReady(t *testing.T) {
 
 			},
 			Validate: func(t *testing.T, w *watcher) {
-				if !w.isReady() {
+				if !w.IsReady() {
 					t.Fatalf("Watcher should be ready: %v", w)
 				}
 			},
@@ -346,11 +346,11 @@ func TestNewWatcher_IsReady(t *testing.T) {
 				return fake.NewFakeClientWithScheme(scheme, ros...)
 			},
 			Prepare: func(w *watcher) {
-				w.addChecker("mydc")
-				w.reload("default")
+				w.AddChecker("mydc")
+				w.Reload("default")
 			},
 			Validate: func(t *testing.T, w *watcher) {
-				if !w.isReady() {
+				if !w.IsReady() {
 					t.Fatalf("Watcher should be ready: %v", w)
 				}
 			},
@@ -393,11 +393,11 @@ func TestNewWatcher_IsReady(t *testing.T) {
 		//		return fake.NewFakeClientWithScheme(scheme, ros...)
 		//	},
 		//	Prepare: func(w *watcher) {
-		//		w.addChecker("mydc")
-		//		w.reload("default")
+		//		w.AddChecker("mydc")
+		//		w.Reload("default")
 		//	},
 		//	Validate: func(t *testing.T, w *watcher) {
-		//		if w.isReady() {
+		//		if w.IsReady() {
 		//			t.Fatalf("Watcher should not be ready: %v", w)
 		//		}
 		//	},
