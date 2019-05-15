@@ -6,7 +6,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"testing"
 
-	"github.com/integr8ly/apicurio-operator/pkg/apis/integreatly/v1alpha1"
 	"github.com/integr8ly/apicurio-operator/test/api/meta"
 )
 
@@ -29,7 +28,6 @@ func PrepareContext(t *testing.T, opts meta.WaitOpts) *framework.TestCtx {
 	}
 
 	globalVars := framework.Global
-
 	err = e2eutil.WaitForDeployment(t, globalVars.KubeClient, ns, "apicurio-operator", 1, opts.RetryInterval, opts.Timeout)
 	if err != nil {
 		t.Fatalf("Operator deployment failed: %v", err)
@@ -38,9 +36,9 @@ func PrepareContext(t *testing.T, opts meta.WaitOpts) *framework.TestCtx {
 	return ctx
 }
 
-func RegisterTypes(objs ...runtime.Object) error {
+func RegisterTypes(scheme func(s *runtime.Scheme) error, objs ...runtime.Object) error {
 	for _, obj := range objs {
-		err := framework.AddToFrameworkScheme(v1alpha1.SchemeBuilder.AddToScheme, obj)
+		err := framework.AddToFrameworkScheme(scheme, obj)
 		if err != nil {
 			return err
 		}

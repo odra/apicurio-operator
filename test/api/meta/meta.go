@@ -17,6 +17,7 @@ type WaitOpts struct {
 
 type ObjectLoader func() (runtime.Object, error)
 
-type ReadinessSpec interface {
-	Observe(opts WaitOpts, loader ObjectLoader) error
+type ResourceWatcherSpec interface {
+	WaitForReadiness(interval time.Duration, timeout time.Duration) error
+	WaitForDeletion(interval time.Duration, timeout time.Duration) error
 }

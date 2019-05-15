@@ -1,11 +1,13 @@
 package watchers
 
 import (
+	"context"
 	"github.com/integr8ly/apicurio-operator/pkg/apis/integreatly/v1alpha1"
-	"github.com/integr8ly/apicurio-operator/test/api/meta"
-	"github.com/integr8ly/apicurio-operator/test/mock"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"time"
 )
 
 type apicurioWatcher struct {
@@ -13,34 +15,52 @@ type apicurioWatcher struct {
 	client   client.Client
 }
 
-func NewAPicurioWatcher(client client.Client) *apicurioWatcher {
+func NewAPicurioWatcher(client client.Client, instance *v1alpha1.Apicurio) *apicurioWatcher {
 	return &apicurioWatcher{
-		Instance: mock.NewApicurio(),
+		Instance: instance,
 		client:   client,
 	}
 }
 
-func (aw *apicurioWatcher) CompareStatus(status *v1alpha1.ApicurioStatus) bool {
-	crStatus := aw.Instance.Status
-	reasonMacthes := *crStatus.Reason == *status.Reason
-	typeMacthes := crStatus.Type == status.Type
+func (aw *apicurioWatcher) WaitForReadiness(interval time.Duration, timeout time.Duration) error {
+	return wait.Poll(interval, timeout, func() (done bool, err error) {
+		readInstance := aw.Instance.DeepCopy()
+		key := types.NamespacedName{
+			Name: readInstance.Name,
+			Namespace: readInstance.Namespace,
+		}
 
-	return typeMacthes && reasonMacthes
-}
-
-func (aw *apicurioWatcher) Observe(opts meta.WaitOpts, loader meta.ObjectLoader) error {
-	return wait.Poll(opts.RetryInterval, opts.Timeout, func() (done bool, err error) {
-		obj, err := loader()
-		if err != nil {
+		innerErr := aw.client.Get(context.TODO(), key, readInstance)
+		if innerErr != nil {
 			return true, err
 		}
 
-		if obj == nil {
-			return false, nil
+		reasonMacthes := *readInstance.Status.Reason == "ApicurioReady"
+		typeMacthes := readInstance.Status.Type == v1alpha1.ApicurioReady
+		if typeMacthes || reasonMacthes {
+			return true, nil
 		}
 
-		innerInstance := obj.(*v1alpha1.Apicurio)
+		return false, nil
+	})
+}
 
-		return aw.CompareStatus(&innerInstance.Status), nil
+func (aw *apicurioWatcher) WaitForDeletion(interval time.Duration, timeout time.Duration) error {
+	return wait.Poll(interval, timeout, func() (done bool, err error) {
+		deletedInstance := aw.Instance.DeepCopy()
+		key := types.NamespacedName{
+			Name: deletedInstance.Name,
+			Namespace: deletedInstance.Namespace,
+		}
+
+		innerErr := aw.client.Get(context.TODO(), key, deletedInstance)
+		if innerErr != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			return true, err
+		}
+
+		return false, nil
 	})
 }
